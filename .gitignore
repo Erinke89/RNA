@@ -1,0 +1,6 @@
+# ignore temporary files from emacs
+*~
+'#*#'
+
+# ignore checkpoint folder from jupyter notebooks
+.ipynb_checkpoints/
