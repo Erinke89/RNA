@@ -1,0 +1,89 @@
+################################################################
+#
+#
+# Pipeline pipeline_mrnaseq.py configuration file for sphinxreport
+#
+# This pipeline.ini file lists some configuration options that you might 
+# want a user to set automatically.
+#
+# Add pipeline specific options into separate sections
+#
+################################################################
+## general options
+[general]
+
+# Project name
+projectname=CGATProject
+
+# Copyright statement
+copyright=CGAT (2010-2014)
+
+# The short X.Y version.
+version=0.1
+
+# The full version, including alpha/beta/rc tags.
+release=0.1
+
+database=csvdb
+########################################################
+# the genome to use (UCSC convention)
+genome=mm10
+
+################################################################
+#
+# Location of annotation database
+#
+################################################################
+[annotations]
+database=/gfs/mirror/annotations/mm10_ensembl88/csvdb
+
+# directory with annotation information
+dir=/gfs/mirror/annotations/mm10_ensembl88/
+
+ensembl_geneset=ensembl.dir/geneset_all.gtf.gz
+
+################################################################
+#
+# STAR mapping options
+#
+################################################################
+[star]
+# directory with star indices
+index_dir=/gfs/mirror/genomes/star
+
+# options to specify different --genomeDir if using sjdb 
+# see guidelines for generating genomes with a splice junction database
+# (/ifs/mirror/genomes/star/CGAT-README)
+# leave blank to use the genome as specified above without junctions.
+genome=mm10
+
+# options for star. Please see the star manual for a list
+# of options. There are many.
+# Be careful with specifying any --genomeLoad options other
+# than the default "NoSharedMemory". Star jobs that fail or are 
+# killed before finishing do not properly clean up even if
+# "LoadAndRemove" is specified. This results in memory not being
+# freed properly causing unrelated jobs to fail unexpectedly with
+# "out of memory" faults.
+options=--outFilterMismatchNmax 2 # --outFilterScoreMin 90
+
+# number of threads to use
+threads=12
+
+# memory required for STAR. The memory requirement depends on
+# the size of the suffix array. Note that the total memory requirement
+# is threads * memory. Our nodes/blades have ~23.5GB.
+# After testing, 1.9 (*12) seems to be the magic number
+memory=2G
+
+
+################################################################
+#
+# sphinxreport build options
+#
+################################################################
+[report]
+
+# prefix to use for publishing the report from this pipeline
+prefix=default
+
