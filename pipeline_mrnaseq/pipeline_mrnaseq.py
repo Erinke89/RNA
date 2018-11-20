@@ -264,6 +264,8 @@ def indexBam(infile, outfile):
 @transform("star.dir/*.bam", suffix(r".bam"), r"_sort.bam")
 def nameSort(infile, outfile):
 
+    infile = ''.join([x for x in [infile] if "_sort" not in x])
+    print(infile)
     statement = '''samtools sort -n -O BAM  %(infile)s > %(outfile)s'''
 
     P.run()
@@ -438,7 +440,7 @@ def salmon(infile, outfile):
 
     outname = outfile[:-len(".log")]
     salmon_index = PARAMS["salmon_index"] # get salmon quasi-mapping index here
-
+    library_type = PARAMS["salmon_libtype"]
     job_threads = "8"
 
     read1 = infile
@@ -447,9 +449,9 @@ def salmon(infile, outfile):
     statement = '''salmon quant 
                      -i %(salmon_index)s
                      -p 8
+                     -l %(library_type)s
                      -1 %(read1)s
                      -2 %(read2)s
-                     -l IU
                      -o %(outname)s
                    &> %(outfile)s;
               '''
@@ -464,14 +466,15 @@ def salmon_SE(infile, outfile):
 
     outname = outfile[:-len(".log")]
     salmon_index = PARAMS["salmon_index"] # get salmon quasi-mapping index here
-
+    library_type = PARAMS["salmon_libtype"]
+    
     job_threads = "8"
 
     statement = '''salmon quant 
                      -i %(salmon_index)s
                      -p 8
+                     -l %(library_type)s
                      -r %(infile)s
-                     -l IU
                      -o %(outname)s
                    &> %(outfile)s;
               '''
