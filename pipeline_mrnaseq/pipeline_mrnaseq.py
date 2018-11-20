@@ -104,6 +104,7 @@ import CGAT.Experiment as E
 import CGATPipelines.Pipeline as P
 import CGAT.BamTools as BamTools
 import pandas as pd
+import re
 
 
 # load options from the config file
@@ -154,14 +155,35 @@ def connect():
 
     return dbh
 
+def isPaired(files):
+    '''Check whether input files are single or paired end
+       Note: this is dependent on files having correct suffix'''
+    
+    paired = []
+
+    for fastq in files:
+        Fpair = re.findall(".*.fastq.1.gz", fastq)
+        paired = paired + Fpair
+
+    if len(paired)==0:
+        unpaired = True
+
+    else:
+        unpaired = False
+    
+    return unpaired
+
 # ---------------------------------------------------
 # Specific pipeline tasks
+# Configure pipeline for paired or single end data
+Unpaired = isPaired(glob.glob("data.dir/*fastq*gz"))
 
 #####################################################
 #################### Mapping ########################
 #####################################################
 #@follows(connect, mkdir("star.dir"))
 @follows(mkdir("star.dir"))
+@active_if(Unpaired==False)
 @transform("data.dir/*_1.fastq.gz",
            regex(r"data.dir/(.*)_1.fastq.gz"),
            r"star.dir/\1.bam")
@@ -197,15 +219,49 @@ def starMapping(infile, outfile):
 
     P.run()
 
+@active_if(Unpaired)
+@transform("data.dir/*.fastq.gz",
+           regex(r"data.dir/(.*).fastq.gz"),
+           r"star.dir/\1.bam")
+def starMapping_SE(infile, outfile):
 
-@transform(starMapping, suffix(r".bam"), r".bam.bai")
+    genomeDir = PARAMS["star_index_dir"]
+
+    job_threads = "12"
+
+    tmpdir = "$SCRATCH_DIR"
+    log_prefix = outfile.rstrip(".bam") + "."
+    
+    statement = '''tmp=`mktemp -p %(tmpdir)s`; checkpoint;
+                   STAR 
+                     --runMode alignReads 
+                     --runThreadN 12 
+                     --genomeDir %(genomeDir)s
+                     --outSAMstrandField intronMotif 
+                     --outFileNamePrefix %(log_prefix)s
+                     --outStd SAM 
+                     --outSAMunmapped Within 
+                     --outFilterMismatchNmax 2 
+                     --readFilesIn %(infile)s 
+                     --readFilesCommand zcat | samtools view -b - 
+                     >  $tmp; checkpoint;
+                   samtools sort -O BAM  $tmp > %(outfile)s; checkpoint;
+                   rm $tmp''' % locals()
+
+    print(statement)
+
+    P.run()
+
+@follows(starMapping, starMapping_SE)
+@transform("star.dir/*.bam", suffix(r".bam"), r".bam.bai")
 def indexBam(infile, outfile):
 
     statement = '''samtools index -b %(infile)s %(outfile)s'''
 
     P.run()
-
-@transform(starMapping, suffix(r".bam"), r"_sort.bam")
+    
+@follows(starMapping, starMapping_SE)
+@transform("star.dir/*.bam", suffix(r".bam"), r"_sort.bam")
 def nameSort(infile, outfile):
 
     statement = '''samtools sort -n -O BAM  %(infile)s > %(outfile)s'''
@@ -372,7 +428,8 @@ def summarystats():
 #####################################################
 ############### TPMs with Salmon ####################
 #####################################################
-@follows(connect, mkdir("salmon.dir"))
+@follows(mkdir("salmon.dir"))
+@active_if(Unpaired==False)
 @transform("data.dir/*fastq.gz",
            regex(r"data.dir/(.*)_1.fastq.gz"),
            r"salmon.dir/\1.log")
@@ -398,7 +455,30 @@ def salmon(infile, outfile):
               '''
     P.run()
 
-@merge(salmon, "salmon.dir/salmon.load")
+@active_if(Unpaired)
+@transform("data.dir/*fastq.gz",
+           regex(r"data.dir/(.*).fastq.gz"),
+           r"salmon.dir/\1.log")
+def salmon_SE(infile, outfile):
+    '''Per sample quantification using salmon'''
+
+    outname = outfile[:-len(".log")]
+    salmon_index = PARAMS["salmon_index"] # get salmon quasi-mapping index here
+
+    job_threads = "8"
+
+    statement = '''salmon quant 
+                     -i %(salmon_index)s
+                     -p 8
+                     -r %(infile)s
+                     -l IU
+                     -o %(outname)s
+                   &> %(outfile)s;
+              '''
+    P.run()
+
+
+@merge("salmon.dir/*log", "salmon.dir/salmon.load")
 def loadSalmon(infiles, outfile):
     '''load the salmon results'''
 
