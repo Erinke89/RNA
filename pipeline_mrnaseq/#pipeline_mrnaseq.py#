@@ -117,12 +117,12 @@ PARAMS = P.getParameters(
 # 1. pipeline_annotations: any parameters will be added with the
 #    prefix "annotations_". The interface will be updated with
 #    "annotations_dir" to point to the absolute path names.
-# PARAMS.update(P.peekParameters(
-#     PARAMS["annotations_dir"],
-#     "pipeline_annotations.py",
-#     on_error_raise=__name__ == "__main__",
-#     prefix="annotations_",
-#     update_interface=True))
+PARAMS.update(P.peekParameters(
+    PARAMS["annotations_dir"],
+    "pipeline_annotations.py",
+    on_error_raise=__name__ == "__main__",
+    prefix="annotations_",
+    update_interface=True))
 
 
 # if necessary, update the PARAMS dictionary in any modules file.
