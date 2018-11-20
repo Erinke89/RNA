@@ -477,7 +477,7 @@ def salmon_SE(infile, outfile):
               '''
     P.run()
 
-
+@follows(salmon, salmon_SE)
 @merge("salmon.dir/*log", "salmon.dir/salmon.load")
 def loadSalmon(infiles, outfile):
     '''load the salmon results'''
