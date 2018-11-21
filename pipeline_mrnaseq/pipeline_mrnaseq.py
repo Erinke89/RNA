@@ -260,12 +260,10 @@ def indexBam(infile, outfile):
 
     P.run()
     
-@follows(starMapping, starMapping_SE)
-@transform("star.dir/*.bam", suffix(r".bam"), r"_sort.bam")
+@follows(indexBam)
+@transform("star.dir/*.bam", suffix(r".bam"), r".bam.sort")
 def nameSort(infile, outfile):
 
-    infile = ''.join([x for x in [infile] if "_sort" not in x])
-    print(infile)
     statement = '''samtools sort -n -O BAM  %(infile)s > %(outfile)s'''
 
     P.run()
@@ -278,8 +276,8 @@ def mapping():
 ################## Raw counts #######################
 #####################################################
 @follows(mapping, mkdir("read_counts.dir"))
-@transform("star.dir/*_sort.bam",
-           regex(r".*/(.*)_sort.bam"),
+@transform("star.dir/*.bam.sort",
+           regex(r".*/(.*).bam.sort"),
            add_inputs(os.path.join(PARAMS["annotations_dir"],
                       PARAMS["annotations_ensembl_geneset"])),
            r"read_counts.dir/\1_counts.txt")
@@ -499,8 +497,10 @@ def salmonGeneTable(infile, outfile):
     '''Prepare a per-gene tpm table'''
 
     table = P.toTable(infile)
-    anndb = PARAMS["annotations_database"]
 
+    anndb = PARAMS["annotations_database"]
+    anndb_table = PARAMS["annotations_dbtable"]
+    
     attach = '''attach "%(anndb)s" as anndb''' % locals()
     con = sqlite3.connect(PARAMS["database_name"])
     c = con.cursor()
@@ -508,7 +508,7 @@ def salmonGeneTable(infile, outfile):
 
     sql = '''select sample_id, gene_id, sum(TPM) tpm
              from %(table)s t
-             inner join anndb.transcript_info i
+             inner join anndb.%(anndb_table)s i
              on t.Name=i.transcript_id
              group by gene_id, sample_id
           ''' % locals()
