@@ -541,9 +541,7 @@ def bamCoverageRNA(infile, outfile):
     job_memory = "2G"
     job_threads = "10"
 
-    # files w/ suffix "_sort.bam" are sorted by name but not indexed, do not use these
-    infile = ' '.join([x for x in [infile] if "_sort.bam" not in x])
-    ### this is a hack, add suffix to sorted bams so that they can be distinguished from the name sorted files in globs
+    norm_method = PARAMS["deeptools_norm_method"]
     
     # STAR MAPQ of 255 indicates uniquely mapped read
     
@@ -552,7 +550,7 @@ def bamCoverageRNA(infile, outfile):
 
             statement = '''bamCoverage -b %(infile)s -o %(outfile)s
                         --binSize 5
-                        --normalizeUsingRPKM
+                        --normalizeUsing %(norm_method)s
                         --samFlagInclude 64
                         --centerReads
                         --minMappingQuality 255
@@ -562,7 +560,7 @@ def bamCoverageRNA(infile, outfile):
         else:
             statement = '''bamCoverage -b %(infile)s -o %(outfile)s
                         --binSize 5
-                        --normalizeUsingRPKM
+                        --normalizeUsing %(norm_method)s
                         --minMappingQuality 255
                         --smoothLength 10
                         --samFlagExclude 4
