@@ -184,8 +184,8 @@ Unpaired = isPaired(glob.glob("data.dir/*fastq*gz"))
 #@follows(connect, mkdir("star.dir"))
 @follows(mkdir("star.dir"))
 @active_if(Unpaired==False)
-@transform("data.dir/*_1.fastq.gz",
-           regex(r"data.dir/(.*)_1.fastq.gz"),
+@transform("data.dir/*.fastq.1.gz",
+           regex(r"data.dir/(.*).fastq.1.gz"),
            r"star.dir/\1.bam")
 def starMapping(infile, outfile):
 
@@ -197,7 +197,7 @@ def starMapping(infile, outfile):
     log_prefix = outfile.rstrip(".bam") + "."
 
     read1 = infile
-    read2 = read1.replace("_1.fastq.gz", "_2.fastq.gz")
+    read2 = read1.replace(".fastq.1.gz", ".fastq.2.gz")
     
     statement = '''tmp=`mktemp -p %(tmpdir)s`; checkpoint;
                    STAR 
@@ -342,7 +342,7 @@ def loadCountTables(infiles, outfile):
 
 ##########################################################################
 @follows(mapping)
-@merge("star.dir/*_sort.bam", "read_counts.dir/featureCounts.txt")
+@merge("star.dir/*.bam.sort", "read_counts.dir/featureCounts.txt")
 def featureCount(infiles, outfile):
     '''Count reads falling in ensembl genes (including introns)'''
 
@@ -388,7 +388,7 @@ def readcounts():
 ################# Picard Stats  #####################
 #####################################################
 @follows(mapping)
-@transform(starMapping,
+@transform("star.dir/*.bam",
            regex(r"(.*).bam"),
            r"\1.picardAlignmentStats.txt")
 def picardAlignmentSummary(infile, outfile):
