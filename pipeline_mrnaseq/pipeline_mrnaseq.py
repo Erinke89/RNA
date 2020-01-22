@@ -1,27 +1,5 @@
-##############################################################################
-#
-#   MRC FGU CGAT
-#
-#   $Id$
-#
-#   Copyright (C) 2017 Tariq Khoyratty
-#
-#   This program is free software; you can redistribute it and/or
-#   modify it under the terms of the GNU General Public License
-#   as published by the Free Software Foundation; either version 2
-#   of the License, or (at your option) any later version.
-#
-#   This program is distributed in the hope that it will be useful,
-#   but WITHOUT ANY WARRANTY; without even the implied warranty of
-#   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-#   GNU General Public License for more details.
-#
-#   You should have received a copy of the GNU General Public License
-#   along with this program; if not, write to the Free Software
-#   Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-###############################################################################
 """===========================
-Pipeline template
+Pipeline mRNA-seq
 ===========================
 
 :Author: Tariq Khoyratty
@@ -34,8 +12,9 @@ Overview
 
 This pipeline is for the processing of mapped mRNA-seq reads.
 Reads in Ensembl protein coding genes are counted with featureCounts,
-& quantified with Cufflinks. Raw counts are also reported for 
-differential expression analysis.
+& quantified with Salmon. Raw counts are also reported for 
+differential expression analysis. Picard tools is used to collect
+QC metrics.
 
 Usage
 =====
@@ -65,24 +44,11 @@ condition_time_replicate.bam
 Requirements
 ------------
 
-The pipeline requires the results from
-:doc:`pipeline_annotations`. Set the configuration variable
-:py:data:`annotations_database` and :py:data:`annotations_dir`.
-
-On top of the default CGAT setup, the pipeline requires the following
-software to be in the path:
-
-.. Add any additional external requirements such as 3rd party software
-   or R modules below:
-
-Requirements:
-
-* samtools >= 1.1
 
 Pipeline output
 ===============
 
-Raw counts of reads in genes, and normalised counts from Cufflinks
+Raw counts of reads in genes, and normalised counts from Salmon
 
 Glossary
 ========
@@ -100,60 +66,49 @@ import sys
 import os
 import glob
 import sqlite3
-import CGAT.Experiment as E
-import CGATPipelines.Pipeline as P
-import CGAT.BamTools as BamTools
+import cgatcore.experiment as E
+from cgatcore import pipeline as P
+from cgat.BamTools import bamtools as BamTools
 import pandas as pd
 import re
 
+# initialize pipeline
+P.initialize()
 
-# load options from the config file
-PARAMS = P.getParameters(
-    ["%s/pipeline.ini" % os.path.splitext(__file__)[0],
-     "../pipeline.ini",
-     "pipeline.ini"])
+# Pipeline configuration
+P.get_parameters(
+		 ["%s/pipeline.yml" % os.path.splitext(__file__)[0],
+		  "../pipeline.yml",
+		  "pipeline.yml"],
+		 )
 
-# add configuration values from associated pipelines
-#
-# 1. pipeline_annotations: any parameters will be added with the
-#    prefix "annotations_". The interface will be updated with
-#    "annotations_dir" to point to the absolute path names.
-# PARAMS.update(P.peekParameters(
-#     PARAMS["annotations_dir"],
-#     "pipeline_annotations.py",
-#     on_error_raise=__name__ == "__main__",
-#     prefix="annotations_",
-#     update_interface=True))
+PARAMS = P.PARAMS
 
+db = PARAMS['database']['url'].split('./')[1]
 
-# if necessary, update the PARAMS dictionary in any modules file.
-# e.g.:
-#
-# import CGATPipelines.PipelineGeneset as PipelineGeneset
-# PipelineGeneset.PARAMS = PARAMS
-#
-# Note that this is a hack and deprecated, better pass all
-# parameters that are needed by a function explicitely.
-
-# -----------------------------------------------
-# Utility functions
 def connect():
-    '''utility function to connect to database.
-
-    Use this method to connect to the pipeline database.
-    Additional databases can be attached here as well.
-
-    Returns an sqlite3 database handle.
+    '''connect to database.
+    This method also attaches to helper databases.
     '''
 
-    dbh = sqlite3.connect(PARAMS["database"])
-    statement = '''ATTACH DATABASE '%s' as annotations''' % (
-        PARAMS["annotations_database"])
+    dbh = sqlite3.connect(db)
+
+    if not os.path.exists(PARAMS["annotations_database"]):
+        raise ValueError(
+                     "can't find database '%s'" %
+                     PARAMS["annotations_database"])
+
+    statement = '''ATTACH DATABASE '%s' as annotations''' % \
+    (PARAMS["annotations_database"])
+
     cc = dbh.cursor()
     cc.execute(statement)
     cc.close()
 
     return dbh
+
+
+# utility functions
 
 def isPaired(files):
     '''Check whether input files are single or paired end
@@ -175,13 +130,68 @@ def isPaired(files):
 
 # ---------------------------------------------------
 # Specific pipeline tasks
+
 # Configure pipeline for paired or single end data
 Unpaired = isPaired(glob.glob("data.dir/*fastq*gz"))
+
+# and strandedness
+Stranded = bool(PARAMS["strandedness"])
+
+# were reads mapped using CGAT pipelines?
+cgat_mapping = bool(PARAMS["cgat_mapping_bool"])
+
 
 #####################################################
 #################### Mapping ########################
 #####################################################
-#@follows(connect, mkdir("star.dir"))
+@follows(connect)
+@files(None, "sample_info.txt")
+def makeSampleInfoTable(infile, outfile):
+    '''Parse sample names and construct sample info table,
+       with "category" column for DESeq2 design'''
+    
+    make_sample_table = True
+    info = {}
+
+    files = glob.glob("data.dir/*fastq*gz")
+    
+    if len(files)==0:
+        pass
+    
+    for f in files:
+        sample_id = os.path.basename(f).split(".")[0]
+        attr =  os.path.basename(f).split(".")[0].split("_")
+
+        if len(attr) == 2:
+            cols = ["sample_id", "condition", "replicate"]
+
+        elif len(attr) == 3:
+            cols = ["sample_id", "condition", "treatment", "replicate"]
+
+        elif len(attr) == 4:
+            cols = ["sample_id", "group", "condition", "treatment", "replicate"]
+
+        else:
+            make_sample_table = False
+            print("Please reformat sample names according to pipeline documentation")
+
+        if sample_id not in info:
+            info[sample_id] = [sample_id] + attr
+
+    if make_sample_table:
+        sample_info = pd.DataFrame.from_dict(info, orient="index")
+        sample_info.columns = cols
+        sub = [x for x in list(sample_info) if x not in ["sample_id", "index", "replicate"]]
+        sample_info["category"] = sample_info[sub].apply(lambda x: '_'.join(str(y) for y in x), axis=1)
+        sample_info.reset_index(inplace=True, drop=True)
+        
+        con = sqlite3.connect(db)
+        sample_info.to_sql("sample_info", con, if_exists="replace")
+
+        sample_info.to_csv(outfile, sep="\t", header=True, index=False)
+
+
+@follows(makeSampleInfoTable, mkdir("star.dir"))
 @follows(mkdir("star.dir"))
 @active_if(Unpaired==False)
 @transform("data.dir/*.fastq.1.gz",
@@ -191,34 +201,32 @@ def starMapping(infile, outfile):
 
     genomeDir = PARAMS["star_index_dir"]
 
-    job_threads = "12"
-
-    tmpdir = "$SCRATCH_DIR"
+    tmpdir = PARAMS["tmp_dir"]
+    
     log_prefix = outfile.rstrip(".bam") + "."
 
     read1 = infile
     read2 = read1.replace(".fastq.1.gz", ".fastq.2.gz")
     
-    statement = '''tmp=`mktemp -p %(tmpdir)s`; checkpoint;
-                   STAR 
-                     --runMode alignReads 
-                     --runThreadN 12 
-                     --genomeDir %(genomeDir)s
-                     --outSAMstrandField intronMotif 
-                     --outFileNamePrefix %(log_prefix)s
-                     --outStd SAM 
-                     --outSAMunmapped Within 
-                     --outFilterMismatchNmax 2 
-                     --readFilesIn %(read1)s %(read2)s
-                     --readFilesCommand zcat | samtools view -b - 
-                     >  $tmp; checkpoint;
-                   samtools sort -O BAM  $tmp > %(outfile)s; checkpoint;
-                   rm $tmp''' % locals()
+    statement = f'''tmp=`mktemp -p {tmpdir}` &&
+                    STAR 
+                      --runMode alignReads 
+                      --runThreadN 12 
+                      --genomeDir {genomeDir}
+                      --outSAMstrandField intronMotif 
+                      --outFileNamePrefix {log_prefix}
+                      --outStd SAM 
+                      --outSAMunmapped Within 
+                      --outFilterMismatchNmax 2 
+                      --readFilesIn {read1} {read2}
+                      --readFilesCommand zcat | samtools view -b - 
+                      >  $tmp &&
+                    samtools sort -O BAM  $tmp > {outfile} &&
+                    rm $tmp'''
 
-    print(statement)
+    P.run(statement, job_threads=12)
 
-    P.run()
-
+    
 @active_if(Unpaired)
 @transform("data.dir/*.fastq.gz",
            regex(r"data.dir/(.*).fastq.gz"),
@@ -227,48 +235,85 @@ def starMapping_SE(infile, outfile):
 
     genomeDir = PARAMS["star_index_dir"]
 
-    job_threads = "12"
+    tmpdir = PARAMS["tmp_dir"]
 
-    tmpdir = "$SCRATCH_DIR"
     log_prefix = outfile.rstrip(".bam") + "."
     
-    statement = '''tmp=`mktemp -p %(tmpdir)s`; checkpoint;
-                   STAR 
-                     --runMode alignReads 
-                     --runThreadN 12 
-                     --genomeDir %(genomeDir)s
-                     --outSAMstrandField intronMotif 
-                     --outFileNamePrefix %(log_prefix)s
-                     --outStd SAM 
-                     --outSAMunmapped Within 
-                     --outFilterMismatchNmax 2 
-                     --readFilesIn %(infile)s 
-                     --readFilesCommand zcat | samtools view -b - 
-                     >  $tmp; checkpoint;
-                   samtools sort -O BAM  $tmp > %(outfile)s; checkpoint;
-                   rm $tmp''' % locals()
+    statement = f'''tmp=`mktemp -p {tmpdir}` &&
+                    STAR 
+                      --runMode alignReads 
+                      --runThreadN 12 
+                      --genomeDir {genomeDir}
+                      --outSAMstrandField intronMotif 
+                      --outFileNamePrefix {log_prefix}
+                      --outStd SAM 
+                      --outSAMunmapped Within 
+                      --outFilterMismatchNmax 2 
+                      --readFilesIn {infile} 
+                      --readFilesCommand zcat | samtools view -b - 
+                      >  $tmp &&
+                    samtools sort -O BAM  $tmp > {outfile} &&
+                    rm $tmp''' 
 
-    print(statement)
-
-    P.run()
+    P.run(statement, job_threads=12)
+    
 
 @follows(starMapping, starMapping_SE)
 @transform("star.dir/*.bam", suffix(r".bam"), r".bam.bai")
 def indexBam(infile, outfile):
 
-    statement = '''samtools index -b %(infile)s %(outfile)s'''
+    statement = f'''samtools index -b {infile} {outfile}'''
 
-    P.run()
+    P.run(statement)
+
     
-@follows(indexBam)
-@transform("star.dir/*.bam", suffix(r".bam"), r".bam.sort")
-def nameSort(infile, outfile):
+@follows(indexBam, mkdir("bam.dir"))
+@transform("star.dir/*.bam",
+           regex(r"star.dir/(.*).bam"),
+           r"bam.dir/\1.bam")
+def addPseudoSequenceQuality(infile, outfile):
+    '''to allow multiQC to pick up the picard metric files
+    sequence quality needs to be added if it is stripped.
+    Therefore an intermediate sam file needs to be generated
+    Arguments
+    ---------
+    infile : string
+    Input file in :term:`BAM` format.
+    outfile : string
+    Output file in :term: `BAM` format.
+    '''
 
-    statement = '''samtools sort -n -O BAM  %(infile)s > %(outfile)s'''
+    log = outfile.replace(".bam", ".bam2bam.log")
+    
+    if cgat_mapping:
+        venv = PARAMS["cgat_mapping_venv"]
+        
+        statement = f'''cat {infile} | 
+                          cgat bam2bam 
+                            -v 5
+                            --method=set-sequence 
+                            --log={log}
+                            > {outfile}'''
+        
+        P.run(statement, job_condaenv=venv)
 
-    P.run()
+        statement = f'''samtools index {outfile}'''
 
-@follows(indexBam, nameSort)
+        P.run(statement)
+
+    else:
+        # if CGAT pipelines not used symlink data into new dir
+        in_index = infile.replace(".bam", ".bam.bai")
+        out_index = outfile.replace(".bam", ".bam.bai")
+
+        statement = f'''dir=`pwd` &&
+                        ln -s $dir/{infile} {outfile} &&
+                        ln -s $dir/{in_index} {out_index}'''
+
+        P.run(statement)
+    
+
+@follows(indexBam, addPseudoSequenceQuality)
 def mapping():
     pass
     
@@ -276,111 +321,57 @@ def mapping():
 ################## Raw counts #######################
 #####################################################
 @follows(mapping, mkdir("read_counts.dir"))
-@transform("star.dir/*.bam.sort",
-           regex(r".*/(.*).bam.sort"),
-           add_inputs(os.path.join(PARAMS["annotations_dir"],
-                      PARAMS["annotations_ensembl_geneset"])),
-           r"read_counts.dir/\1_counts.txt")
-def htseq_count(infiles, outfile):
-    '''Count reads falling in ensembl genes'''
-
-    bam, gtf = infiles
-    tmp_dir = "$SCRATCH_DIR"
-
-    # htseq-count filters out multi-mapping reads by default (as these can cause false positives
-    # for differential expression analysis. The filtering is based on the NH optional SAM field.
-    # Not all aligners set this field, so it is safer to filter reads on their MAPQ score as well,
-    # to prevent counting multi-mapping reads multiple times.
-
-    ### STAR does have this field, so filtering on MAPQ score isn't required.
-    
-    # htseq-count -a 255 <- filters out reads with MAPQ < 255 (uniquely mapped in STAR)
-    # so no removal of low quality / multimapping reads required prior to counting
-    
-    statement = '''geneset=`mktemp -p %(tmp_dir)s`; checkpoint ;
-                   zcat %(gtf)s > $geneset ; checkpoint ;
-                   htseq-count 
-                     -a 255 
-                     -s no 
-                     -m union 
-                     -f bam 
-                     -r name
-                     -t exon
-                     -i gene_id 
-                     %(bam)s 
-                     $geneset
-                   > %(outfile)s ; checkpoint ;
-                   rm $geneset''' % locals()
-
-    print(statement)
-    
-    P.run()
-
-@transform(htseq_count, suffix(r".txt"), r".load")
-def loadhtseq_count(infile, outfile):
-    P.load(infile, outfile, options='-H "gene_id,raw_counts" ')
-
-@follows(loadhtseq_count)   
-@transform(htseq_count,
-           suffix("_counts.txt"),
-           "_table.txt")
-def prepareCountTables(infile, outfile):
-
-    statement = '''echo -e "gene_id\\tcounts" > %(outfile)s;
-                   grep -v "__" %(infile)s
-                   >> %(outfile)s;
-                '''
-    P.run()
-
-@merge(prepareCountTables, "htseq.counts.load")
-def loadCountTables(infiles, outfile):
-
-    P.concatenateAndLoad(infiles, outfile,
-                         regex_filename=".*/(.*)_table.txt",
-                         cat = "track",
-                         options = '-i "gene_id"')
-
-##########################################################################
-@follows(mapping)
-@merge("star.dir/*.bam.sort", "read_counts.dir/featureCounts.txt")
+@merge("bam.dir/*.bam", "read_counts.dir/featureCounts.txt")
 def featureCount(infiles, outfile):
     '''Count reads falling in ensembl genes (including introns)'''
 
     gtf = os.path.join(PARAMS["annotations_dir"], PARAMS["annotations_ensembl_geneset"])
 
     bams = ' '.join(infiles)    
-    tmp_dir = "$SCRATCH_DIR"
+    tmp_dir = PARAMS["tmp_dir"]
   
     threads = len(infiles)
-    job_threads = threads
-    
-    statement = '''tmp=`mktemp -p %(tmp_dir)s`; checkpoint ;
-                   gtf=`mktemp -p %(tmp_dir)s`; checkpoint ;
-                   zcat %(gtf)s > $gtf; checkpoint;
-                   featureCounts
-                     -T %(threads)s
-                     -s 0
-                     -S fr
-                     -Q 255
-                     -t exon
-                     -g gene_id
-                     -p
-                     -a $gtf
-                     -o $tmp
-                     %(bams)s ; checkpoint ;
-                   sed 's/star.dir\///g' $tmp | 
-                   sed 's/.bam//g' - > %(outfile)s ; checkpoint;
-                   rm $tmp $gtf''' % locals()
-                  
-    print(statement)
-    
-    P.run()
 
+    if Unpaired==False:
+        pair_opts = "-p"
+    else:
+        pair_opts = " "
+    
+    # get strandedness for featureCounts
+    if PARAMS["strandedness"] == ("RF" or "R"):
+        strand = "2"
+    elif PARAMS["strandedness"] == ("FR" or "F"):
+        strand = "1"
+    else:
+        strand = "0"
+
+    statement = f'''tmp=`mktemp -p {tmp_dir}` &&
+                    gtf=`mktemp -p {tmp_dir}` &&
+                    zcat {gtf} > $gtf &&
+                    featureCounts
+                      -T {threads}
+                      -s {strand}
+                      -Q 255
+                      -t exon
+                      -g gene_id
+                      {pair_opts}
+                      -a $gtf
+                      -o $tmp
+                      {bams} &&
+                    sed 's/bam.dir\///g' $tmp | 
+                    sed 's/.bam//g' - > {outfile} &&
+                    rm $tmp $gtf'''
+    
+    P.run(statement, job_threads=threads)
+
+    
 @transform(featureCount, suffix(r".txt"), r".load")
 def loadFeatureCount(infile, outfile):
     P.load(infile, outfile)
+    
 
-@follows(loadCountTables, loadFeatureCount)
+#@follows(loadCountTables, loadFeatureCount)
+@follows(loadFeatureCount)
 def readcounts():
     pass
 
@@ -388,40 +379,93 @@ def readcounts():
 ################# Picard Stats  #####################
 #####################################################
 @follows(mapping)
-@transform("star.dir/*.bam",
+@transform("bam.dir/*.bam",
            regex(r"(.*).bam"),
            r"\1.picardAlignmentStats.txt")
 def picardAlignmentSummary(infile, outfile):
     '''get alignment summary stats with picard for filtered bams'''
 
-    tmp_dir = "$SCRATCH_DIR"
+    tmp_dir = PARAMS["tmp_dir"]
     refSeq = os.path.join(PARAMS["genome_dir"], PARAMS["genome"] + ".fa")
 
-    job_threads = "4"
-    job_memory = "5G"
+    mem = "12G"
     
-    statement = '''tmp=`mktemp -p %(tmp_dir)s`; checkpoint ;
-                   CollectAlignmentSummaryMetrics
-                     R=%(refSeq)s
-                     I=%(infile)s
-                     O=$tmp; checkpoint ;
-                   cat $tmp | grep -v "#" > %(outfile)s'''
+    statement = f'''tmp=`mktemp -p {tmp_dir}` &&
+                    picard -Xmx{mem}
+                    CollectAlignmentSummaryMetrics
+                      R={refSeq}
+                      I={infile}
+                      O=$tmp &&
+                    cat $tmp | grep -v "#" > {outfile}'''
 
-    print(statement)
+    P.run(statement, job_threads=3, job_memory=mem)
 
-    P.run()
-
+    
 @merge(picardAlignmentSummary,
        "picardAlignmentSummary.load")
 def loadpicardAlignmentSummary(infiles, outfile):
     '''load the complexity metrics to a single table in the db'''
 
-    P.concatenateAndLoad(infiles, outfile,
+    P.concatenate_and_load(infiles, outfile,
                          regex_filename="(.*).picardAlignmentStats",
                          cat="sample_id",
                          options='-i "sample_id"')
 
-@follows(loadpicardAlignmentSummary)
+    
+@active_if(Stranded==True)
+@subdivide("bam.dir/*.bam",
+           regex(r"(.*).bam"),
+           [r"\1.picardRNAseqMetrics.txt",
+             r"\1.picardRNAseqMetrics.hist.txt"])
+def picardRNAseqMetrics(infile, outfiles):
+    '''Run picard RNAseq metrics for stranded libraries.
+       Split output into tables for database upload'''
+
+    table, hist = outfiles
+    
+    tmp_dir = PARAMS["tmp_dir"]
+    refSeq = os.path.join(PARAMS["genome_dir"], PARAMS["genome"] + ".fa")
+
+    mem = "12G"
+
+    refFlat = PARAMS["ref_flat"]
+
+    # convert strandedness to PICARD library type
+    if PARAMS["strandedness"] == ("RF" or "R"):
+        strand = "SECOND_READ_TRANSCRIPTION_STRAND"
+    elif PARAMS["strandedness"] == ("FR" or "F"):
+        strand = "FIRST_READ_TRANSCRIPTION_STRAND"
+    else:
+        strand = "NONE"
+        
+    statement = f'''picard_out=`mktemp -p {tmp_dir}` &&
+                    picard -Xmx{mem}
+                    CollectRnaSeqMetrics
+                      REF_FLAT={refFlat}
+                      INPUT={infile}
+                      OUTPUT=$picard_out
+                      STRAND={strand} &&
+                    grep -v "#" $picard_out |
+                      grep  "[a-z,A-Z,0-9]" - | head -n2 > {table} &&
+                    grep -v "#" $picard_out |
+                      sed -n '/normalized_position/,/^[[:blank:]]/p' - > {hist} &&
+                    rm $picard_out'''
+    
+    P.run(statement, job_threads=3, job_memory=mem)
+
+    
+@merge("bam.dir/*.picardRNAseqMetrics.txt",
+       "picardRNAseqMetrics.load")
+def loadPicardRNAseqMetrics(infiles, outfile):
+    '''load picardRNAseqMetrics'''
+
+    P.concatenate_and_load(infiles, outfile,
+                         regex_filename="(.*).picardRNAseqMetrics",
+                         cat="sample_id",
+                         options='-i "sample_id"')
+
+       
+@follows(loadpicardAlignmentSummary, picardRNAseqMetrics)
 def summarystats():
     pass
 
@@ -430,8 +474,8 @@ def summarystats():
 #####################################################
 @follows(mkdir("salmon.dir"))
 @active_if(Unpaired==False)
-@transform("data.dir/*fastq.gz",
-           regex(r"data.dir/(.*)_1.fastq.gz"),
+@transform("data.dir/*fastq.1.gz",
+           regex(r"data.dir/(.*).fastq.1.gz"),
            r"salmon.dir/\1.log")
 def salmon(infile, outfile):
     '''Per sample quantification using salmon'''
@@ -439,21 +483,31 @@ def salmon(infile, outfile):
     outname = outfile[:-len(".log")]
     salmon_index = PARAMS["salmon_index"] # get salmon quasi-mapping index here
     library_type = PARAMS["salmon_libtype"]
-    job_threads = "8"
+    threads = 8
 
     read1 = infile
-    read2 = read1.replace("_1.fastq.gz", "_2.fastq.gz")
+    read2 = read1.replace(".fastq.1.gz", ".fastq.2.gz")
+
+    version = PARAMS["salmon_version"]
+
+    statement = []
     
-    statement = '''salmon quant 
-                     -i %(salmon_index)s
-                     -p 8
-                     -l %(library_type)s
-                     -1 %(read1)s
-                     -2 %(read2)s
-                     -o %(outname)s
-                   &> %(outfile)s;
-              '''
-    P.run()
+    if version:
+        statement.append(f'''module switch bio/salmon/0.11.3 bio/salmon/{version} && ''')
+    
+    statement.append(f'''salmon quant 
+                           -i {salmon_index}
+                           -p {threads}
+                           -l {library_type}
+                           -1 {read1}
+                           -2 {read2}
+                           -o {outname}
+                         &> {outfile}''')
+
+    statement = ' '.join(statement)
+
+    P.run(statement, job_threads=threads)
+
 
 @active_if(Unpaired)
 @transform("data.dir/*fastq.gz",
@@ -462,22 +516,31 @@ def salmon(infile, outfile):
 def salmon_SE(infile, outfile):
     '''Per sample quantification using salmon'''
 
-    outname = outfile[:-len(".log")]
+    outname = outfile.replace(".log", "")
     salmon_index = PARAMS["salmon_index"] # get salmon quasi-mapping index here
     library_type = PARAMS["salmon_libtype"]
+    threads = 8
+
+    version = PARAMS["salmon_version"]
+
+    statement = []
     
-    job_threads = "8"
+    if version:
+        statement.append(f'''module switch bio/salmon/0.11.3 bio/salmon/{version} && ''')
+    
+    statement.append(f'''salmon quant 
+                           -i {salmon_index}
+                           -p {threads}
+                           -l {library_type}
+                           -r {infile}
+                           -o {outname}
+                         &> {outfile}''')
 
-    statement = '''salmon quant 
-                     -i %(salmon_index)s
-                     -p 8
-                     -l %(library_type)s
-                     -r %(infile)s
-                     -o %(outname)s
-                   &> %(outfile)s;
-              '''
-    P.run()
+    statement = ' '.join(statement)
 
+    P.run(statement, job_threads=threads)
+
+    
 @follows(salmon, salmon_SE)
 @merge("salmon.dir/*log", "salmon.dir/salmon.load")
 def loadSalmon(infiles, outfile):
@@ -485,38 +548,39 @@ def loadSalmon(infiles, outfile):
 
     tables = [x.replace(".log", "/quant.sf") for x in infiles]
 
-    P.concatenateAndLoad(tables, outfile,
+    P.concatenate_and_load(tables, outfile,
                          regex_filename=".*/(.*)/quant.sf",
                          cat="sample_id",
                          options="-i Name",
                          job_memory=PARAMS["sql_himem"])
 
+    
 @files(loadSalmon,
        "salmon.dir/salmon_genes.txt")
 def salmonGeneTable(infile, outfile):
     '''Prepare a per-gene tpm table'''
 
-    table = P.toTable(infile)
+    table = P.to_table(infile)
 
     anndb = PARAMS["annotations_database"]
     anndb_table = PARAMS["annotations_dbtable"]
     
-    attach = '''attach "%(anndb)s" as anndb''' % locals()
-    con = sqlite3.connect(PARAMS["database_name"])
+    attach = f'''attach "{anndb}" as anndb'''
+    con = sqlite3.connect(db)
     c = con.cursor()
     c.execute(attach)
 
-    sql = '''select sample_id, gene_id, sum(TPM) tpm
-             from %(table)s t
-             inner join anndb.%(anndb_table)s i
+    sql = f'''select sample_id, gene_id, sum(TPM) tpm
+             from {table} t
+             inner join anndb.{anndb_table} i
              on t.Name=i.transcript_id
-             group by gene_id, sample_id
-          ''' % locals()
+             group by gene_id, sample_id'''
 
     df = pd.read_sql(sql, con)
     df = df.pivot("gene_id", "sample_id", "tpm")
     df.to_csv(outfile, sep="\t", index=True, index_label="gene_id")
 
+    
 @transform(salmonGeneTable,
            suffix(".txt"),
            ".load")
@@ -524,6 +588,7 @@ def loadSalmonGeneTable(infile, outfile):
 
     P.load(infile, outfile, options='-i "gene_id"')
 
+    
 @follows(loadSalmonGeneTable)
 def readquant():
     pass
@@ -538,36 +603,33 @@ def readquant():
 def bamCoverageRNA(infile, outfile):
     '''Make normalised bigwig tracks with deeptools'''
 
-    job_memory = "2G"
-    job_threads = "10"
-
     norm_method = PARAMS["deeptools_norm_method"]
     
     # STAR MAPQ of 255 indicates uniquely mapped read
     
     if len(infile) > 0:
-        if BamTools.isPaired(infile):
-
-            statement = '''bamCoverage -b %(infile)s -o %(outfile)s
-                        --binSize 5
-                        --normalizeUsing %(norm_method)s
-                        --samFlagInclude 64
-                        --centerReads
-                        --minMappingQuality 255
-                        --smoothLength 10
-                        --skipNAs'''
-
+        if BamTools.is_paired(infile):
+            statement = f'''bamCoverage -b {infile} -o {outfile}
+                              --binSize 5
+                              --normalizeUsing {norm_method}
+                              --samFlagInclude 64
+                              --centerReads
+                              --minMappingQuality 255
+                              --smoothLength 10
+                              --skipNAs
+                              -p "max" '''
+                
         else:
-            statement = '''bamCoverage -b %(infile)s -o %(outfile)s
-                        --binSize 5
-                        --normalizeUsing %(norm_method)s
-                        --minMappingQuality 255
-                        --smoothLength 10
-                        --samFlagExclude 4
-                        --centerReads'''
+            statement = f'''bamCoverage -b {infile} -o {outfile}
+                              --binSize 5
+                              --normalizeUsing {norm_method}
+                              --minMappingQuality 255
+                              --smoothLength 10
+                              --samFlagExclude 4
+                              --centerReads
+                              -p "max" '''
 
-        # centerReads option and small binsize should increase resolution around enriched areas
-        P.run()
+        P.run(statement, job_memory="2G", job_threads=10)
 
 @follows(bamCoverageRNA)
 def coverage():
@@ -580,37 +642,36 @@ def full():
     pass
 
 
-@follows(mkdir("report"))
-def build_report():
-    '''build report from scratch.
+@follows(full)
+@files(None, "*.nbconvert.html")
+def report(infile, outfile):
+    '''Generate html report on pipeline results from ipynb template(s)'''
 
-    Any existing report will be overwritten.
-    '''
+    templates = PARAMS["report_path"]
 
-    E.info("starting report build process from scratch")
-    P.run_report(clean=True)
+    if len(templates)==0:
+        print("Specify Jupyter ipynb template path in pipeline.ini for html report generation")
+        pass
+    
+    for template in templates:
+        infile = os.path.basename(template)
+        outfile = infile.replace(".ipynb", ".nbconvert.html")
+        nbconvert = infile.replace(".ipynb", ".nbconvert.ipynb")
+        tmp = os.path.basename(template)
+        
+        statement = f'''cp {template} .  &&
+                        jupyter nbconvert 
+                          --to notebook 
+                          --allow-errors 
+                          --ExecutePreprocessor.timeout=-1
+                          --execute {infile} && 
+                        jupyter nbconvert 
+                          --to html 
+                          --ExecutePreprocessor.timeout=-1
+                          --execute {nbconvert} &&
+                        rm {tmp}'''
 
-
-@follows(mkdir("report"))
-def update_report():
-    '''update report.
-
-    This will update a report with any changes inside the report
-    document or code. Note that updates to the data will not cause
-    relevant sections to be updated. Use the cgatreport-clean utility
-    first.
-    '''
-
-    E.info("updating report")
-    P.run_report(clean=False)
-
-
-@follows(update_report)
-def publish_report():
-    '''publish report in the CGAT downloads directory.'''
-
-    E.info("publishing report")
-    P.publish_report()
+        P.run(statement)
 
 if __name__ == "__main__":
     sys.exit(P.main(sys.argv))

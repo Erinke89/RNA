@@ -1,0 +1,104 @@
+####---
+
+# location of scratch dir
+# $SCRATCH, /gfs/scratch, local_tmpdir
+tmp_dir: /gfs/scratch
+
+# the genome to use (UCSC convention)
+genome: mm10
+
+# Gene annotations in refFlat form. For picardtools
+# Format described here: http://genome.ucsc.edu/goldenPath/gbdDescriptionsOld.html#RefFlat
+ref_flat: /gfs/mirror/ucsc/mm10/database/refFlat.txt.gz
+
+# location of indexed genome 
+genome_dir:/gfs/mirror/genomes/index
+
+# Strand Assignment for spliced mapping
+# Using HISAT nomenclature, more detail available at
+# http://www.ccb.jhu.edu/software/hisat/manual.shtml#options
+# under --rna-strandness
+# FR = secondstrand paired-end
+# RF = firststrand paired-end
+# F = secondstrand single-end
+# R = firststrand single-end
+#
+# Paired-end sequencinng after TruSeq Library Prep is "RF"
+#
+# Default = empty: unstranded
+strandedness: RF
+
+annotations:
+    database: /gfs/mirror/annotations/mm10_ensembl88/csvdb
+    dbtable: transcript_info
+
+    # directory with annotation information
+    dir: /gfs/mirror/annotations/mm10_ensembl88/
+
+    ensembl_geneset: ensembl.dir/geneset_all.gtf.gz
+
+cgat_mapping:
+    # if using cgat pipelines for mapping symlink fastqs into data.dir/
+    # and bams into star.dir/
+    # e.g. data.dir/*.fastq.[1-2].gz (or ".fastq" if SE) and star.dir/*.bam
+
+    # specify if reads were mapped w/ CGAT pipeline
+    bool: 0
+
+    # cgat-flow virtual env. Required to run CGAT specific code & tools
+    venv: cgat-f
+
+star:
+    # directory with star indices
+    index_dir: /gfs/mirror/genomes/star/mm10.dir
+
+    # options to specify different --genomeDir if using sjdb 
+    # see guidelines for generating genomes with a splice junction database
+    # (/ifs/mirror/genomes/star/CGAT-README)
+    # leave blank to use the genome as specified above without junctions.
+    genome: mm10
+
+    # options for star. Please see the star manual for a list
+    # of options. There are many.
+    # Be careful with specifying any --genomeLoad options other
+    # than the default "NoSharedMemory". Star jobs that fail or are 
+    # killed before finishing do not properly clean up even if
+    # "LoadAndRemove" is specified. This results in memory not being
+    # freed properly causing unrelated jobs to fail unexpectedly with
+    # "out of memory" faults.
+    options: --outFilterMismatchNmax 2 # --outFilterScoreMin 90
+
+    # number of threads to use
+    threads: 12
+
+    # memory required for STAR
+    memory: 2G
+
+salmon:
+    # location of salmon quasi-mapping index
+    index: /gfs/mirror/genomes/salmon/mm10_ensembl88_all_8.2.quasi.31/
+
+    # library type
+    # -fr-unstranded e.g. Illumina = IU (pe), U (se)
+    # -fr-firststrand = ISR (pe), SR (se)
+    # -fr-secondstrand = ISF (pe), SF (se)
+    libtype: IU
+
+    # salmon version (current version = 0.11.3) leave blank to use this.
+    # this should be the version of Salmon that quasi-indexes were built with
+    version: 0.08.2
+
+deeptools:
+    # normalisation method for bigwig coverage tracks
+    # choose normalisation method from: RPKM, CPM, BPM (TPM), RPGC, or None
+    norm_method: BPM
+
+sql:
+   # RAM required for high memory operations e.g. 5000M
+   himem: 10000M
+
+report:
+    # path to Jupyter notebook reports
+    path:
+        - <PATH>/pipeline_mrnaseq/reports/RNA_Pipeline_Report.ipynb
+
