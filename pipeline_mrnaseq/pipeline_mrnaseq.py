@@ -72,9 +72,6 @@ from cgat.BamTools import bamtools as BamTools
 import pandas as pd
 import re
 
-# initialize pipeline
-P.initialize()
-
 # Pipeline configuration
 P.get_parameters(
 		 ["%s/pipeline.yml" % os.path.splitext(__file__)[0],
@@ -413,6 +410,7 @@ def loadpicardAlignmentSummary(infiles, outfile):
 
     
 @active_if(Stranded==True)
+@follows(mapping)
 @subdivide("bam.dir/*.bam",
            regex(r"(.*).bam"),
            [r"\1.picardRNAseqMetrics.txt",
@@ -465,7 +463,7 @@ def loadPicardRNAseqMetrics(infiles, outfile):
                          options='-i "sample_id"')
 
        
-@follows(loadpicardAlignmentSummary, picardRNAseqMetrics)
+@follows(loadpicardAlignmentSummary, loadPicardRNAseqMetrics)
 def summarystats():
     pass
 
@@ -596,7 +594,7 @@ def readquant():
 #####################################################
 ############### DeepTools Coverage ##################
 #####################################################
-@follows(readquant)
+@follows(mapping)
 @transform("star.dir/*.bam",
            regex(r"star.dir/(.*).bam"),
            r"star.dir/\1.coverage.bw")
@@ -642,7 +640,7 @@ def full():
     pass
 
 
-@follows(full)
+#@follows(full)
 @files(None, "*.nbconvert.html")
 def report(infile, outfile):
     '''Generate html report on pipeline results from ipynb template(s)'''

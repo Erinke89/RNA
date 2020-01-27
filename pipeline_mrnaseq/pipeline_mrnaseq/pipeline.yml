@@ -12,7 +12,7 @@ genome: mm10
 ref_flat: /gfs/mirror/ucsc/mm10/database/refFlat.txt.gz
 
 # location of indexed genome 
-genome_dir:/gfs/mirror/genomes/index
+genome_dir: /gfs/mirror/genomes/index
 
 # Strand Assignment for spliced mapping
 # Using HISAT nomenclature, more detail available at
