@@ -101,4 +101,16 @@ report:
     # path to Jupyter notebook reports
     path:
         - <PATH>/pipeline_mrnaseq/reports/RNA_Pipeline_Report.ipynb
+        - <PATH>/pipeline_mrnaseq/reports/RNA_Pipeline_DESeq2.ipynb
+
+    # comparisons for DESeq2.
+    # Optional, if left empty all combinations of sample names will be used to generate comparisons
+    # format = comparison_name: [sample1_name, sample2_name]
+    # e.g. comparisons:
+    #          IRF5_0hr_VS_WT_0hr: [IRF5_0hr, WT_0hr]
+    #          IRF5_2hr_VS_WT_2hr: [IRF5_2hr, WT_2hr]
+    #          IRF5_2hr_VS_IRF5_0hr: [IRF5_2hr, IRF5_0hr]
+    #          WT_2hr_VS_WT_0hr: [WT_2hr, WT_0hr]
+        
+    comparisons:
 

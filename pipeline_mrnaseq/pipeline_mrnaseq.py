@@ -189,7 +189,6 @@ def makeSampleInfoTable(infile, outfile):
 
 
 @follows(makeSampleInfoTable, mkdir("star.dir"))
-@follows(mkdir("star.dir"))
 @active_if(Unpaired==False)
 @transform("data.dir/*.fastq.1.gz",
            regex(r"data.dir/(.*).fastq.1.gz"),
