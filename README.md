@@ -7,16 +7,16 @@ To be run after fastq files have been trimmed with cgat-flow readqc, runs standa
 
 #### Tasks
 1) mapping
-  - map reads with STAR and index BAM files
-  - if mapping is conducted with CGAT pipeline, these BAMs can be used as input, rather than running STAR
+    - map reads with STAR and index BAM files
+   - if mapping is conducted with CGAT pipeline, these BAMs can be used as input, rather than running STAR
 2) readcounts
-  - count reads over genes with featureCounts
+    - count reads over genes with featureCounts
 3) summarystats
-  - collect mapping statistics with picard tools
+   - collect mapping statistics with picard tools
 4) readquant
-  - calculate TPMs with Salmon
+    - calculate TPMs with Salmon
 5) coverage
-  - generate bigWig coverage tracks for visualisation
+    - generate bigWig coverage tracks for visualisation
 
 
 #### Inputs:
