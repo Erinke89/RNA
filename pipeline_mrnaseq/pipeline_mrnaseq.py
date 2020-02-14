@@ -450,7 +450,7 @@ def picardRNAseqMetrics(infile, outfiles):
     
     P.run(statement, job_threads=3, job_memory=mem)
 
-    
+@follows(picardRNAseqMetrics)    
 @merge("bam.dir/*.picardRNAseqMetrics.txt",
        "picardRNAseqMetrics.load")
 def loadPicardRNAseqMetrics(infiles, outfile):
